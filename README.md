@@ -265,6 +265,51 @@ CLA T2tt_700_50.root DELPHES -i /CutLang/runs/tutorials/ex12_counts.adl
 
 More ADL files for various full LHC analyses (focusing on signal region selections) can be found in [this git repository.](https://github.com/ADL4HEP/ADLLHCanalyses)
 
+### <ins> Tracking events per region: </ins>
+
+By default CutLang reports how many events pass each region, but not *which* ones.
+Adding the `-r` flag records the per-event result of every region, which makes it
+possible to study the overlaps and correlations between signal regions.
+
+```bash
+CLA [inputrootfile] [inputeventformat] -i [adlfilename.adl] -e [numberofevents] -r 1
+```
+
+With this flag, each region directory in `histoOut-[adlfilename].root` gets an extra
+`TNtuple` called `rntuple` with four columns:
+
+| Column | Meaning |
+| --- | --- |
+| `rn`   | run number |
+| `lb`   | luminosity block number |
+| `evt`  | event number |
+| `rslt` | 1 if the event passed **all** cuts of this region, 0 otherwise |
+
+One row is written for **every** event and for **every** region, whether the event
+passes or not. Each region therefore holds a complete pass/fail record covering the
+same events, and the records of two regions can be compared directly.
+
+To inspect the results:
+
+```cpp
+root histoOut-[adlfilename].root
+[regionname]->cd()   // e.g. SR1->cd()
+rntuple->Scan()      // all events, with their pass/fail flag
+```
+
+To list only the events accepted by that region:
+
+```cpp
+rntuple->Scan("evt.evt", "rslt.rslt==1")
+```
+
+Repeating this for two regions gives the event numbers accepted by each; their
+overlap is what the correlation between the two regions is built from.
+
+A python tool that reads these ntuples and computes the Pearson correlation
+matrix between all regions is available at
+[cutlang-sr-correlations](https://github.com/eyoruk13/cutlang-sr-correlations).
+
 
 
 ## <a name="tutorial"></a> Tutorial

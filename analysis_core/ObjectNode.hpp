@@ -39,6 +39,7 @@ class ObjectNode : public Node{
 
 void updateParticles( Node* cutIt, std::vector<myParticle *>* particles, int ipart, std::string name);
  int getCollectionSize(int t2, std::string base_collection2, AnalysisObjects *ao );
+bool collectionExists (int t2, std::string base_collection2, AnalysisObjects *ao );
 void createNewJet   (AnalysisObjects* ao,vector<Node*> *criteria,std::vector<myParticle *>* particles, std::string name, std::string basename);
 void createNewFJet  (AnalysisObjects* ao,vector<Node*> *criteria,std::vector<myParticle *>* particles, std::string name, std::string basename);
 void createNewEle   (AnalysisObjects* ao,vector<Node*> *criteria,std::vector<myParticle *>* particles, std::string name, std::string basename);

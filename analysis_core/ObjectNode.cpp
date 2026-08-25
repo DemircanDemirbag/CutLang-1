@@ -149,6 +149,14 @@ double ObjectNode::evaluate(AnalysisObjects* ao){
          if(  ao->jets.find(basename)!=ao->jets.end()) basename="Combo"; 
          if(  ao->ljets.find(basename)!=ao->ljets.end()) basename="Combo"; 
       } // we already have basename defined
+
+      // The previous node in the chain is a DIFFERENT flavour (e.g. Union(goodeles,goodjets)
+      // builds obj -> p2(jet) -> p1(electron) -> p0). Once it has produced its collection this
+      // node must fall back to its own base, otherwise the walk never terminates and we hit the
+      // bare exit(1) below. Same-flavour chains keep using the rules above.
+      if (anode->type != type && collectionExists(anode->type, basename, ao)) {
+          basename = (type==combo_t) ? "Combo" : symbol;
+      }
     DEBUG("new basename:"<<basename<<"\n");
 
 // is it in the map list?
@@ -301,6 +309,25 @@ void updateParticles (Node *cutIt, std::vector<myParticle *>* particles, int ipa
                   aparticles->at(kjp)->index=ipart;
                  }
               }
+}
+
+// Does this collection exist yet? Same flavour switch as getCollectionSize below, but it
+// answers without touching .at() and without _Exit on a missing key.
+bool collectionExists(int t2, std::string base_collection2, AnalysisObjects *ao ){
+    switch(t2){
+        case muon_t:     return (ao->muos).find(base_collection2)     != (ao->muos).end();
+        case truth_t:    return (ao->truth).find(base_collection2)    != (ao->truth).end();
+        case track_t:    return (ao->track).find(base_collection2)    != (ao->track).end();
+        case electron_t: return (ao->eles).find(base_collection2)     != (ao->eles).end();
+        case jet_t: case bjet_t: case lightjet_t:
+                         return (ao->jets).find(base_collection2)     != (ao->jets).end();
+        case photon_t:   return (ao->gams).find(base_collection2)     != (ao->gams).end();
+        case fjet_t:     return (ao->ljets).find(base_collection2)    != (ao->ljets).end();
+        case tau_t:      return (ao->taus).find(base_collection2)     != (ao->taus).end();
+        case combo_t:    return (ao->combos).find(base_collection2)   != (ao->combos).end();
+        case consti_t:   return (ao->constits).find(base_collection2) != (ao->constits).end();
+        default:         return false;
+    }
 }
 
 int getCollectionSize(int t2, std::string base_collection2, AnalysisObjects *ao ){

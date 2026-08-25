@@ -2620,30 +2620,42 @@ objectBloc : OBJ ID TAKE ID criteria {
                                      Node *p1=NULL, *p2=NULL;
                                      ikc = criteriaBank.find($6);
                                      iuc = criteriaBank.find($8);
+                                     if (ikc == criteriaBank.end() || iuc == criteriaBank.end()) {
+                                                ERRBUG($6<<","<<$8<<" : ") ;
+                                                yyerror(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                                                        "Union operands must be plain objects, not other Unions");
+                                                YYERROR;
+                                     }
                                      vector<myParticle *> partis, qartis;
                                      ikc->second[0]->getParticles(&partis);
                                      iuc->second[0]->getParticles(&qartis);
+                                     // Guard for segfault If we ever want to use select ALL in object blocks when using Union
+                                     int t1 = none_t, t2 = none_t;
+                                     if      (it != ObjectCuts->end()) t1 = ((ObjectNode*)it->second)->type;
+                                     else if (!partis.empty())         t1 = partis[0]->type;
+                                     if      (iu != ObjectCuts->end()) t2 = ((ObjectNode*)iu->second)->type;
+                                     else if (!qartis.empty())         t2 = qartis[0]->type;
 
                                      if ( 1 )
                                      {//if I dont have objects, 
                                        DEBUG($6 << " and "<< $8 << " seen first time, Adding their defining cuts in Union.\n");
                                        Node* p0   =new ObjectNode("Combo",NULL ,createNewCombo ,ikc->second ,  "LCombo" );  //  was createNewEle
-                                       if (partis[0]->type == electron_t) { 
+                                       if (t1 == electron_t) { 
                                           p1 =new ObjectNode($6     ,p0   ,createNewEle   ,ikc->second ,  "ELE" );
-                                       } else if (partis[0]->type == muon_t) {
+                                       } else if (t1 == muon_t) {
                                           p1 =new ObjectNode($6     ,p0   ,createNewMuo   ,ikc->second ,  "MUO" );
-                                       } else if (partis[0]->type == jet_t) {
+                                       } else if (t1 == jet_t) {
                                           p1 =new ObjectNode($6     ,p0   ,createNewJet   ,ikc->second ,  "JET" );
-                                       } else if (partis[0]->type == fjet_t) {
+                                       } else if (t1 == fjet_t) {
 					  p1 =new ObjectNode($6     ,p0   ,createNewFJet  ,ikc->second ,  "FJET");
 				       }
-                                       if (qartis[0]->type == electron_t) { 
+                                       if (t2 == electron_t) { 
                                           p2 =new ObjectNode($8     ,p1   ,createNewEle   ,iuc->second ,  "ELE" );
-                                       } else if (qartis[0]->type == muon_t) {
+                                       } else if (t2 == muon_t) {
                                           p2 =new ObjectNode($8     ,p1   ,createNewMuo   ,iuc->second ,  "MUO" );
-                                       } else if (qartis[0]->type == jet_t) {
+                                       } else if (t2 == jet_t) {
                                           p2 =new ObjectNode($8     ,p1   ,createNewJet   ,iuc->second ,  "JET" );
-                                       } else if (qartis[0]->type == fjet_t) {
+                                       } else if (t2 == fjet_t) {
 					  p2 =new ObjectNode($8     ,p1   ,createNewFJet  ,iuc->second ,  "FJET");
 				       }
 
@@ -2662,6 +2674,62 @@ objectBloc : OBJ ID TAKE ID criteria {
                                        ObjectCuts->insert(make_pair($2,obj));
                                      }
                                   }
+        | OBJ ID ':' UNION '(' ID ',' ID ',' ID ')' {
+                                     DEBUG(" 3-way Union "<<$2<<" from "<<$6<<", "<<$8<<" and "<<$10<<"\n");
+                                     const char* opname[3] = { $6, $8, $10 };
+                                     vector<Node*>  opcrit[3];
+                                     int            optype[3] = {none_t,none_t,none_t};
+                                     vector<myParticle*> newList;
+
+                                     for (int k=0; k<3; k++){
+                                       map<string, Node *>::iterator it = ObjectCuts->find(opname[k]);
+                                       if (it == ObjectCuts->end()) {
+                                          ERRBUG(opname[k]<<" : ") ;
+                                          yyerror(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                                                  "Object not defined");
+                                          YYERROR;
+                                       }
+                                       map<string,vector<Node*> >::iterator ic = criteriaBank.find(opname[k]);
+                                       if (ic == criteriaBank.end()) {
+                                          ERRBUG(opname[k]<<" : ") ;
+                                          yyerror(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                                                  "Union operands must be plain objects, not other Unions");
+                                          YYERROR;
+                                       }
+                                       opcrit[k] = ic->second;
+                                       optype[k] = ((ObjectNode*)it->second)->type;
+                                       myParticle* mp = new myParticle;
+                                       mp->index      = 6213;
+                                       mp->type       = optype[k];
+                                       mp->collection = opname[k];
+                                       newList.push_back(mp);
+                                     }
+
+                                     Node* nnode = new FuncNode(Qof,newList,"qo");
+                                     vector<Node*> newNList; // cut list
+                                     newNList.push_back(nnode);
+
+                                     // p0 -> p1($6) -> p2($8) -> p3($10), each materialising its operand
+                                     Node* prev = new ObjectNode("Combo",NULL,createNewCombo,opcrit[0],"LCombo");
+                                     for (int k=0; k<3; k++){
+                                       int t = optype[k];
+                                       if      (t==electron_t) prev=new ObjectNode(opname[k],prev,createNewEle ,opcrit[k],"ELE");
+                                       else if (t==muon_t)     prev=new ObjectNode(opname[k],prev,createNewMuo ,opcrit[k],"MUO");
+                                       else if (t==tau_t)      prev=new ObjectNode(opname[k],prev,createNewTau ,opcrit[k],"TAU");
+                                       else if (t==photon_t)   prev=new ObjectNode(opname[k],prev,createNewPho ,opcrit[k],"PHO");
+                                       else if (t==jet_t)      prev=new ObjectNode(opname[k],prev,createNewJet ,opcrit[k],"JET");
+                                       else if (t==fjet_t)     prev=new ObjectNode(opname[k],prev,createNewFJet,opcrit[k],"FJET");
+                                       else {
+                                          ERRBUG(opname[k]<<" : ") ;
+                                          yyerror(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                                                  "Unsupported object type in Union");
+                                          YYERROR;
+                                       }
+                                     }
+
+                                     Node* obj = new ObjectNode($2,prev,createNewCombo,newNList,$2);
+                                     ObjectCuts->insert(make_pair($2,obj));
+                              }
         | OBJ ID ':' UNION '(' LEPTON ',' LEPTON ',' LEPTON ')' {
                                      DEBUG(" "<<$2<<" is a new **main Set with "<< $6 <<" and "<< $8 << " and " << $10<<"\n");
                                      myParticle* a = new myParticle;

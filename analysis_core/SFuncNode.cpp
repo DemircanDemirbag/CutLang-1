@@ -638,73 +638,136 @@ double ht(AnalysisObjects* ao, string s, float id){
     return (sum_htjet);
 }
 
+// Which AnalysisObjects collection holds a given object name?
+// userfuncA's "id" cannot be trusted for this: fmegajets/sumobj/negsumobj pass a
+// particleType there, but fhemisphere packs 100*seed+assoc into the same slot.
+static particleType resolveCollectionType(AnalysisObjects* ao, const string& s){
+    if (ao->jets.find(s)     != ao->jets.end()     ) return jet_t;
+    if (ao->eles.find(s)     != ao->eles.end()     ) return electron_t;
+    if (ao->muos.find(s)     != ao->muos.end()     ) return muon_t;
+    if (ao->taus.find(s)     != ao->taus.end()     ) return tau_t;
+    if (ao->gams.find(s)     != ao->gams.end()     ) return photon_t;
+    if (ao->ljets.find(s)    != ao->ljets.end()    ) return fjet_t;
+    if (ao->combos.find(s)   != ao->combos.end()   ) return combo_t;
+    if (ao->constits.find(s) != ao->constits.end() ) return consti_t;
+    if (ao->truth.find(s)    != ao->truth.end()    ) return truth_t;
+    if (ao->track.find(s)    != ao->track.end()    ) return track_t;
+    return none_t;
+}
+
+// gather the four-vectors of one collection, whatever its flavour. Mirrors ht() above.
+// The bare .at(s) is safe: resolveCollectionType already confirmed the key is in this map.
+static std::vector<TLorentzVector> collectLVs(AnalysisObjects* ao, const string& s, particleType pid){
+    std::vector<TLorentzVector> lvs;
+    switch (pid){
+     case truth_t:    for (UInt_t i=0; i<ao->truth.at(s).size();    i++) lvs.push_back(ao->truth.at(s).at(i).lv());    break;
+     case track_t:    for (UInt_t i=0; i<ao->track.at(s).size();    i++) lvs.push_back(ao->track.at(s).at(i).lv());    break;
+     case muon_t:     for (UInt_t i=0; i<ao->muos.at(s).size();     i++) lvs.push_back(ao->muos.at(s).at(i).lv());     break;
+     case electron_t: for (UInt_t i=0; i<ao->eles.at(s).size();     i++) lvs.push_back(ao->eles.at(s).at(i).lv());     break;
+     case tau_t:      for (UInt_t i=0; i<ao->taus.at(s).size();     i++) lvs.push_back(ao->taus.at(s).at(i).lv());     break;
+     case jet_t: case bjet_t: case lightjet_t:
+                      for (UInt_t i=0; i<ao->jets.at(s).size();     i++) lvs.push_back(ao->jets.at(s).at(i).lv());     break;
+     case fjet_t:     for (UInt_t i=0; i<ao->ljets.at(s).size();    i++) lvs.push_back(ao->ljets.at(s).at(i).lv());    break;
+     case photon_t:   for (UInt_t i=0; i<ao->gams.at(s).size();     i++) lvs.push_back(ao->gams.at(s).at(i).lv());     break;
+     case combo_t:    for (UInt_t i=0; i<ao->combos.at(s).size();   i++) lvs.push_back(ao->combos.at(s).at(i).lv());   break;
+     case consti_t:   for (UInt_t i=0; i<ao->constits.at(s).size(); i++) lvs.push_back(ao->constits.at(s).at(i).lv()); break;
+     default:  std::cerr<<"collectLVs: no such particle type:"<<pid<<"\n"; break;
+    }
+    return lvs;
+}
+
+// Shrink-and-overwrite ONE collection in place. This is the loop that used to sit inline
+// in userfuncA, with ao->jets.at(s) renamed to coll and retjets to in. It has to be a
+// template because vector<dbxJet>, vector<dbxMuon> and vector<dbxParticle> are unrelated
+// types: the elements share the dbxParticle base, the containers do not.
+template <class V> static void writeLVs(V& coll, const std::vector<TLorentzVector>& in){
+    for (int ip=(int)coll.size()-1; ip>=0; ip--){
+      if (ip > (int)in.size()-1) coll.erase( coll.begin()+ip );
+      else                       coll.at(ip).setTlv( in[ip] );
+    }
+}
+
 double userfuncA(AnalysisObjects* ao, string s, int id, std::vector<TLorentzVector> (*func)(std::vector<TLorentzVector> jets, int p1) ){
 // string contains what to send
-// id contains the particle type ASSUME ID=JET TYPE,
+// id is forwarded to func untouched: fmegajets/sumobj/negsumobj ignore it or treat it as a
+// particleType, but fhemisphere decodes it as 100*seed+assoc. So the collection flavour is
+// resolved from the name instead.
 
    DEBUG("UserfunctionA, s:"<<s<<" id: "<<id<<"\n");
 
-   std::vector<TLorentzVector> myjets;
-   for (UInt_t i=0; i<ao->jets.at(s).size(); i++) myjets.push_back(ao->jets.at(s).at(i).lv() );
+   particleType pid = resolveCollectionType(ao, s);
+   if (pid == none_t) { std::cerr<<"userfuncA: no collection named "<<s<<"\n"; return (0); }
 
-   DEBUG("evaluating external function on jets: :"<<s<<"\n");
+   std::vector<TLorentzVector> myjets = collectLVs(ao, s, pid);
+
+   DEBUG("evaluating external function on collection:"<<s<<" type:"<<pid<<"\n");
    std::vector<TLorentzVector> retjets= (*func)(myjets, id);
    DEBUG("external function Done. size:"<<retjets.size()<<"\n");
 
-   for (int ipart=ao->jets.at(s).size()-1; ipart>=0; ipart--){ // I have all particles, jets, in an event.
-     if (ipart > (retjets.size()-1) ) {
-         ao->jets.at(s).erase( ao->jets.at(s).begin()+ipart );
-     } else {
-          ao->jets.at(s).at(ipart).setTlv( retjets[ipart] );
-     }
-   }
+   // If func returned more objects than it was given it cannot have done anything useful:
+   // fmegajets and fhemisphere both hand back 2 vectors even for a 1-object input, and one
+   // of them is null. Leave the collection alone rather than overwrite a real object.
+   // sumobj/negsumobj return 1 for any input, so they are unaffected.
+   if (retjets.size() > myjets.size()) return (0);
 
-//   cout <<s<<"\n";
-//   if (retjets.size() < ao->jets.at(s).size()) 
-//       ao->jets.at(s).erase(ao->jets.at(s).begin(), ao->jets.at(s).begin()+ao->jets.at(s).size()-retjets.size()); 
-//   ao->jets.at(s).resize(retjets.size());
-//   ao->jets.at(s).shrink_to_fit(); 
-//   for (int ipart=0; ipart<retjets.size(); ipart++){
-//          ao->jets.at(s).at(ipart).setTlv( retjets[ipart] );
-//   }
+   switch (pid){
+     case truth_t:    writeLVs(ao->truth.at(s),    retjets); break;
+     case track_t:    writeLVs(ao->track.at(s),    retjets); break;
+     case muon_t:     writeLVs(ao->muos.at(s),     retjets); break;
+     case electron_t: writeLVs(ao->eles.at(s),     retjets); break;
+     case tau_t:      writeLVs(ao->taus.at(s),     retjets); break;
+     case jet_t: case bjet_t: case lightjet_t:
+                      writeLVs(ao->jets.at(s),     retjets); break;
+     case fjet_t:     writeLVs(ao->ljets.at(s),    retjets); break;
+     case photon_t:   writeLVs(ao->gams.at(s),     retjets); break;
+     case combo_t:    writeLVs(ao->combos.at(s),   retjets); break;
+     case consti_t:   writeLVs(ao->constits.at(s), retjets); break;
+     default: break;
+   }
    return (1);
 }
 
 double userfuncB(AnalysisObjects* ao, string s, int id, double (*func)(std::vector<TLorentzVector> jets ) ){
-// string contains what to send
-// id contains the particle type ASSUME ID=JET TYPE,
+// string contains what to send. Collection flavour is resolved from the name, see userfuncA.
 
    DEBUG("UserfunctionB :"<<s<<"\n");
 
-   std::vector<TLorentzVector> myjets;
-   for (UInt_t i=0; i<ao->jets.at(s).size(); i++) myjets.push_back(ao->jets.at(s).at(i).lv() );
+   particleType pid = resolveCollectionType(ao, s);
+   if (pid == none_t) { std::cerr<<"userfuncB: no collection named "<<s<<"\n"; return (0); }
+
+   std::vector<TLorentzVector> myjets = collectLVs(ao, s, pid);
+   if (myjets.size() < 2) return (0);   // fMR indexes j[0] and j[1]
    DEBUG("evaluating external function :"<<s<<"\n");
    double retvalue= (*func)(myjets);
    return (retvalue);
 }
 
 double userfuncC(AnalysisObjects* ao, string s, int id, double (*func)(std::vector<TLorentzVector> jets, TVector2 amet ) ){
-// string contains what to send
-// id contains the particle type ASSUME ID=JET TYPE,
+// string contains what to send. Collection flavour is resolved from the name, see userfuncA.
 
    DEBUG("UserfunctionC :"<<s<<"\n");
 
-   std::vector<TLorentzVector> myjets;
+   particleType pid = resolveCollectionType(ao, s);
+   if (pid == none_t) { std::cerr<<"userfuncC: no collection named "<<s<<"\n"; return (0); }
+
         TVector2 mymet=ao->met["MET"];
-   for (UInt_t i=0; i<ao->jets.at(s).size(); i++) myjets.push_back(ao->jets.at(s).at(i).lv() );
+   std::vector<TLorentzVector> myjets = collectLVs(ao, s, pid);
+   if (myjets.size() < 2) return (0);   // fMTR indexes j[0] and j[1]
    DEBUG("evaluating external function :"<<s<<"\n");
    double retvalue= (*func)(myjets, mymet);
    return (retvalue);
 }
 
 double userfuncD(AnalysisObjects* ao, string s, int id, TLorentzVector alv, double (*func)(std::vector<TLorentzVector> jets, TLorentzVector amet ) ){
-// string contains what to send
-// id contains the particle type ASSUME ID=JET TYPE,
+// string contains what to send. Collection flavour is resolved from the name, see userfuncA.
 
    DEBUG("UserfunctionD :"<<s<<"\n");
 
-   std::vector<TLorentzVector> myjets;
-   for (UInt_t i=0; i<ao->jets.at(s).size(); i++) myjets.push_back(ao->jets.at(s).at(i).lv() );
+   particleType pid = resolveCollectionType(ao, s);
+   if (pid == none_t) { std::cerr<<"userfuncD: no collection named "<<s<<"\n"; return (0); }
+
+   std::vector<TLorentzVector> myjets = collectLVs(ao, s, pid);
+   if (myjets.size() < 2) return (0);   // fMTR2 indexes j[0] and j[1]
    DEBUG("evaluating external function :"<<s<<"\n");
    double retvalue= (*func)(myjets, alv);
    return (retvalue);

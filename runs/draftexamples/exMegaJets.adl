@@ -1,0 +1,28 @@
+# test
+
+object jets
+  take JET
+  select Pt(JET) > 10
+
+object muos : MUO
+  select Pt(MUO) > 10
+
+object eles : ELE
+  select Pt(ELE) > 10
+
+object leps : Union(muos, eles)
+
+object jetleps : Union(muos, eles, jets)
+
+define megajets : fmegajets(jetleps) # Creating two megajets using the input collection
+
+define MR : fMR(jetleps)
+
+region test
+  select ALL
+  select Size(jetleps) >= 2
+  print "pTs before fmegajets: " Pt(jetleps)
+  print "fMR before" MR
+  select megajets == 1 # Razorfunc returns 1 after successful megajets creation and updates the input collection 
+  print "pTs after fmegahets: " Pt(jetleps) 
+  print "fMR after" MR
